@@ -3,3 +3,4 @@ curl-cffi==0.5.10
 beautifulsoup4
 user_agent
 requests==2.31.0
+tls_client

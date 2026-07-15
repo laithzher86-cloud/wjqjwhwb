@@ -65,8 +65,7 @@ usernames = [
 
 # قائمة إصدارات المتصفح للتبديل
 BROWSER_VERSIONS = [
-    "chrome110", "chrome120", "chrome124", "chrome99", "chrome101",
-    "edge101", "edge110", "safari15_5", "safari16_5"
+    "chrome110", 
 ]
 
 # قائمة اللغات
@@ -173,11 +172,11 @@ def process_card_sync(ccx, proxy_str=None):
         logger.info(f"Impersonating: {impersonate_version}")
         
         # إنشاء جلسة جديدة
-        session = requests.Session(
-            impersonate=impersonate_version,
-            proxies=proxies,
-            timeout=30,
-        )
+     
+        session = tls_client.Session(
+    client_identifier="chrome_110",
+    random_tls_extension_order=True
+)
         
         # إنشاء بصمة جديدة
         fingerprint = generate_fingerprint()

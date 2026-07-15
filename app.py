@@ -8,6 +8,8 @@ from bs4 import BeautifulSoup
 import json
 import logging
 from datetime import datetime
+from user_agent import generate_user_agent
+user = generate_user_agent()
 
 app = Flask(__name__)
 
@@ -88,10 +90,22 @@ def process_card_sync(ccx):
             yy = yy.split("20")[1]
         
         # إعداد البروكسي
+
+        proxy_list = [
+    "http://purevpn0s8732217:i67s60ep@px440401.pointtoserver.com:10780",
+    "http://purevpn0s8732217:i67s60ep@px400501.pointtoserver.com:10780",
+    "http://reseller3270s320237:7Grp9Gki@px121001.pointtoserver.com:10780",
+    "http://reseller3270s320237:7Grp9Gki@px180801.pointtoserver.com:10780",
+    "http://reseller3270s320237:7Grp9Gki@px591201.pointtoserver.com:10780",
+    "http://tickets:proxyon145@173.234.153.90:12345",
+]
+
+        proxy = random.choice(proxy_list)
+
         proxies = {
-            'http': 'http://purevpn0s8732217:i67s60ep@px440401.pointtoserver.com:10780',
-            'https': 'http://purevpn0s8732217:i67s60ep@px440401.pointtoserver.com:10780',
-        }
+    "http": proxy,
+    "https": proxy,
+}
         
         # إنشاء جلسة جديدة لكل طلب
         session = requests.Session(
@@ -101,7 +115,7 @@ def process_card_sync(ccx):
         )
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+            'User-Agent': user,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Content-Type': 'application/x-www-form-urlencoded',
         }
@@ -177,7 +191,7 @@ def process_card_sync(ccx):
             'accept-language': 'ar-IQ,ar;q=0.9,en-US;q=0.8,en;q=0.7',
             'content-type': 'application/json;charset=UTF-8',
             'origin': 'https://secure.nmi.com',
-            'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+            'user-agent': user,
         }
         
         # إرسال رقم البطاقة
@@ -231,7 +245,7 @@ def process_card_sync(ccx):
                 'content-type': 'application/json',
                 'origin': 'https://boostme.com',
                 'x-nmi-form': 'true',
-                'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+                'user-agent': user,
             }
         )
         

